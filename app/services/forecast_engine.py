@@ -150,18 +150,18 @@ def _compute_quarter_context(
     return QuarterContext(
         quarter_label=_quarter_label(year, quarter),
         mc_q=round(mc_result.mc, 6),
-        lme_q_avg=round(mc_result.lme, 6),
-        midwest_q_avg=round(mc_result.midwest, 6),
+        lme_q=round(mc_result.lme, 6),
+        midwest_q=round(mc_result.midwest, 6),
         ppi_q=round(ppi_q, 4),
         cng_q=round(cng_q, 6),
         ams_q=round(ams_q, 6),
         prev_quarter_label=_quarter_label(prev_year, prev_quarter),
-        mc_q_prev=round(mc_result_prev.mc, 6),
-        lme_q_prev_avg=round(mc_result_prev.lme, 6),
-        midwest_q_prev_avg=round(mc_result_prev.midwest, 6),
-        ppi_q_prev=round(ppi_q_prev, 4),
-        cng_q_prev=round(cng_q_prev, 6),
-        ams_q_prev=round(ams_q_prev, 6),
+        mc_q_1=round(mc_result_prev.mc, 6),
+        lme_q_1=round(mc_result_prev.lme, 6),
+        midwest_q_1=round(mc_result_prev.midwest, 6),
+        ppi_q_1=round(ppi_q_prev, 4),
+        cng_q_1=round(cng_q_prev, 6),
+        ams_q_1=round(ams_q_prev, 6),
         ppi_factor=round(ppi_factor, 8),
         ams_delta=round(ams_delta, 6),
     )
@@ -232,9 +232,9 @@ def _compute_price_breakdown(
     """
     
     total_change = round(predicted_price - current_price, 6)
-    lme_delta     = ctx.lme_q_avg     - ctx.lme_q_prev_avg
-    midwest_delta = ctx.midwest_q_avg - ctx.midwest_q_prev_avg
-    cng_delta     = ctx.cng_q         - ctx.cng_q_prev
+    lme_delta     = ctx.lme_q     - ctx.lme_q_1
+    midwest_delta = ctx.midwest_q - ctx.midwest_q_1
+    cng_delta     = ctx.cng_q     - ctx.cng_q_1
     lme_effect     = round(lme_delta     * df_c * pwt, 6)
     midwest_effect = round(midwest_delta * df_c * pwt, 6)
     cng_effect     = round(cng_delta     * pwt,        6)

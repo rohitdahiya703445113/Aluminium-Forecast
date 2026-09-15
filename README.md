@@ -353,10 +353,10 @@ Alternative docs (ReDoc): `http://localhost:8000/redoc`
         "cng_q": 0.95,
         "ams_q": 4.6365,
         "prev_quarter_label": "Q2-2026",
-        "mc_q_prev": 1.3298,
-        "ppi_q_prev": 276.33,
-        "cng_q_prev": 0.72,
-        "ams_q_prev": 2.6350,
+        "mc_q-1": 1.3298,
+        "ppi_q-1": 276.33,
+        "cng_q-1": 0.72,
+        "ams_q-1": 2.6350,
         "ppi_factor": 0.07710708,
         "ams_delta": 2.0016
       }

@@ -130,8 +130,8 @@ class TestForecastEngineHappyPath:
         expected_ams_q = ctx.mc_q * 1.44 + ctx.cng_q
         assert ctx.ams_q == pytest.approx(expected_ams_q, abs=1e-4)
 
-        expected_ams_q_prev = ctx.mc_q_prev * 1.44 + ctx.cng_q_prev
-        assert ctx.ams_q_prev == pytest.approx(expected_ams_q_prev, abs=1e-4)
+        expected_ams_q_1 = ctx.mc_q_1 * 1.44 + ctx.cng_q_1
+        assert ctx.ams_q_1 == pytest.approx(expected_ams_q_1, abs=1e-4)
 
         # Verify formula
         expected_price = (
@@ -169,10 +169,10 @@ class TestForecastEngineHappyPath:
                 market.get_lme(ym) + market.get_midwest_premium(ym), abs=1e-6
             )
             assert ctx.ppi_q == pytest.approx(market.get_ppi(ym), abs=1e-4)
-            assert ctx.mc_q_prev == pytest.approx(
+            assert ctx.mc_q_1 == pytest.approx(
                 market.get_lme("2026-03") + market.get_midwest_premium("2026-03"), abs=1e-6
             )
-            assert ctx.ppi_q_prev == pytest.approx(market.get_ppi("2026-03"), abs=1e-4)
+            assert ctx.ppi_q_1 == pytest.approx(market.get_ppi("2026-03"), abs=1e-4)
 
     def test_all_parts_can_be_forecasted(self):
         engine = make_engine()

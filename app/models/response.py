@@ -4,10 +4,16 @@ Every field that feeds the formula is surfaced so the caller can
 validate and debug individual intermediate values.
 """
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 class QuarterContext(BaseModel):
-    """Quarterly aggregates used in the price formula for one forecast step."""
+    """Quarterly aggregates used in the price formula for one forecast step.
+
+    Previous-quarter fields are named *_q_1 in Python and serialised as
+    *_q-1 in JSON (e.g. ppi_q_1 → "ppi_q-1").
+    """
+    # Allow construction by Python field name (mc_q_1=...) as well as alias.
+    model_config = ConfigDict(populate_by_name=True)
     # Current quarter
     quarter_label: str = Field(
         ..., description="Human-readable label, e.g. 'Q1-2026'"
@@ -15,10 +21,10 @@ class QuarterContext(BaseModel):
     mc_q: float = Field(
         ..., description="MC_Q: LME + Midwest of the predicted month ($/lb)"
     )
-    lme_q_avg: float = Field(
+    lme_q: float = Field(
         ..., description="LME of the predicted month ($/lb)"
     )
-    midwest_q_avg: float = Field(
+    midwest_q: float = Field(
         ..., description="Midwest premium of the predicted month ($/lb)"
     )
     ppi_q: float = Field(
@@ -34,23 +40,23 @@ class QuarterContext(BaseModel):
     prev_quarter_label: str = Field(
         ..., description="Human-readable label, e.g. 'Q4-2025'"
     )
-    mc_q_prev: float = Field(
-        ..., description="MC_Q-1: LME + Midwest of last month of previous quarter ($/lb)"
+    mc_q_1: float = Field(
+        ..., alias="mc_q-1", description="MC_Q-1: LME + Midwest of last month of previous quarter ($/lb)"
     )
-    lme_q_prev_avg: float = Field(
-        ..., description="LME of last month of previous quarter ($/lb)"
+    lme_q_1: float = Field(
+        ..., alias="lme_q-1", description="LME of last month of previous quarter ($/lb)"
     )
-    midwest_q_prev_avg: float = Field(
-        ..., description="Midwest premium of last month of previous quarter ($/lb)"
+    midwest_q_1: float = Field(
+        ..., alias="midwest_q-1", description="Midwest premium of last month of previous quarter ($/lb)"
     )
-    ppi_q_prev: float = Field(
-        ..., description="PPI_Q-1: PPI of last month of previous quarter"
+    ppi_q_1: float = Field(
+        ..., alias="ppi_q-1", description="PPI_Q-1: PPI of last month of previous quarter"
     )
-    cng_q_prev: float = Field(
-        ..., description="CNG_Q-1: CNG of last month of previous quarter ($/lb)"
+    cng_q_1: float = Field(
+        ..., alias="cng_q-1", description="CNG_Q-1: CNG of last month of previous quarter ($/lb)"
     )
-    ams_q_prev: float = Field(
-        ..., description="AMS_Q-1 = (MC_Q-1 × DF_c) + CNG_Q-1 ($/lb)"
+    ams_q_1: float = Field(
+        ..., alias="ams_q-1", description="AMS_Q-1 = (MC_Q-1 × DF_c) + CNG_Q-1 ($/lb)"
     )
     # Derived factors
     ppi_factor: float = Field(
@@ -85,10 +91,10 @@ class PriceChangeBreakdown(BaseModel):
       P_next - P_current
         = [(AMS_Q - AMS_Q-1) × PWt]  +  [PPI_Factor × P_current]
         = [(MC_Q - MC_Q-1) × DF_c + (CNG_Q - CNG_Q-1)] × PWt  +  PPI_effect
-      MC_Q - MC_Q-1 = (lme_q_avg - lme_q_prev_avg) + (midwest_q_avg - midwest_q_prev_avg)
+      MC_Q - MC_Q-1 = (lme_q - lme_q-1) + (midwest_q - midwest_q-1)
       So:
-        lme_effect     = (lme_q_avg - lme_q_prev_avg) × DF_c × PWt
-        midwest_effect = (midwest_q_avg - midwest_q_prev_avg) × DF_c × PWt
+        lme_effect     = (lme_q - lme_q-1) × DF_c × PWt
+        midwest_effect = (midwest_q - midwest_q-1) × DF_c × PWt
         cng_effect     = (CNG_Q - CNG_Q-1) × PWt
         ppi_effect     = PPI_Factor × P_current
     """

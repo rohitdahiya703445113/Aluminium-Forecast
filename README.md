@@ -47,17 +47,28 @@ Where:
 |---|---|
 | `AMS_Q` | `(MC_Q × DF_c) + CNG_Q` — Alloy Metal + Gas cost, current quarter |
 | `AMS_Q-1` | `(MC_Q-1 × DF_c) + CNG_Q-1` — same for previous quarter |
-| `MC_Q` | `avg(LME, quarter months) + avg(Midwest, quarter months)` in $/lb |
-| `MC_Q-1` | Same as MC_Q but for the previous quarter |
-| `PPI_Q` | PPI index value at the **last month** of the current quarter |
+| `MC_Q` | `LME + Midwest` of the **month being predicted**, in $/lb |
+| `MC_Q-1` | `LME + Midwest` of the **last month** of the previous quarter, in $/lb |
+| `PPI_Q` | PPI index value of the **month being predicted** |
 | `PPI_Q-1` | PPI index value at the **last month** of the previous quarter |
 | `PPI_Factor` | `(PPI_Q − PPI_Q-1) / PPI_Q-1` |
-| `CNG_Q` | CNG cost at the **last month** of the current quarter ($/lb) |
+| `CNG_Q` | CNG cost of the **month being predicted** ($/lb) |
 | `CNG_Q-1` | CNG cost at the **last month** of the previous quarter ($/lb) |
 | `DF_c` | Fixed constant = **1.44** |
 | `PWt` | Part weight in lbs (fixed per Part Number + Tier 1) |
 
 **Iteration logic:** Starting from the current month (auto-detected from system clock), the engine forecasts the first month of the next quarter, then the second, and so on for 12 months. Each predicted price becomes the `P_current` for the next month.
+
+**`include_current_month`** (optional, `"YES"` / `"NO"`, default `"NO"`): with `"YES"` the forecast starts at the **current** month instead of next month and covers 13 months (e.g. sitting in Sep 2026 → Sep 2026 … Sep 2027). 
+
+**Price month:** the header of the Parts sheet price column must name the month its prices are for, e.g. `Current Price ($) Aug 2026` (also accepted: `August 2026`, `2026-08`, `08/2026`). The first `P_current` is always the price of the month just before the first forecast month:
+
+| `include_current_month` | Price month needed (sitting in Sep 2026) | Forecast months |
+|---|---|---|
+| `"NO"` (default) | Sep 2026 (this month) | Oct 2026 → Sep 2027 (12) |
+| `"YES"` | Aug 2026 (last month) | Sep 2026 → Sep 2027 (13) |
+
+If the header's month doesn't match, the request fails with a message saying which month the data holds and which month is needed.
 
 **Example (sitting in Aug 2026):**
 - Step 1 → Forecast Sep 2026 using Q3-2026 data, base = Aug 2026 actual price
@@ -182,7 +193,7 @@ What it does, step by step:
 3. Looks up the current base price from the data store
 4. For each of the next 12 months:
    - Determines the calendar quarter
-   - Builds a `QuarterContext` (MC_Q, AMS_Q, PPI_Q, CNG_Q, etc.) — **cached per quarter** so it is only computed once for all three months in the same quarter
+   - Builds a `QuarterContext` (MC_Q, AMS_Q, PPI_Q, CNG_Q, etc.) for that month — MC_Q and PPI_Q come from the predicted month itself, so the context is computed per month
    - Applies the formula to get `predicted_price`
    - Rolls `predicted_price` forward as `P_current` for the next step
 5. Returns a `ForecastResponse` with all 12 `MonthForecast` objects, each containing every intermediate variable used in the formula
@@ -193,7 +204,7 @@ What it does, step by step:
 |---|---|
 | `_quarter_of_month(month)` | Returns 1–4 for a given month number |
 | `_quarter_months(year, quarter)` | Returns the three `YYYY-MM` keys for a quarter |
-| `_last_month_of_quarter(year, quarter)` | Returns the anchor month for PPI and CNG lookups |
+| `_last_month_of_quarter(year, quarter)` | Returns the last month of a quarter — used for the previous-quarter (`_Q-1`) lookups |
 | `_prev_quarter(year, quarter)` | Handles year rollover (Q1 → previous year Q4) |
 
 ---
@@ -219,9 +230,12 @@ Pydantic model for the single-part endpoint body. Validates incoming JSON before
 ```json
 {
   "part_number": "09-0052-003",
-  "tier_1": "Kadon Aerospace"
+  "tier_1": "Kadon Aerospace",
+  "include_current_month": "NO"
 }
 ```
+
+`include_current_month` is optional (`"YES"` / `"NO"`, case-insensitive, default `"NO"`). The batch endpoint accepts it as a multipart form field alongside the file.
 
 ---
 
@@ -439,7 +453,7 @@ Same pattern — implement `PartRepository` from `base.py` and swap the `get_par
 
 ### Parts sheet — edit this to add or update parts
 
-| Part Number | Tier 1 | Weight (lbs) | Current Price ($) |
+| Part Number | Tier 1 | Weight (lbs) | Current Price ($) Aug 2026 |
 |---|---|---|---|
 | 09-0052-003 | NA | 3.6 | 47.09 |
 | 09-0052-003 | Kadon Aerospace | 3.6 | 49.50 |
@@ -447,7 +461,9 @@ Same pattern — implement `PartRepository` from `base.py` and swap the `get_par
 
 - **Part Number + Tier 1 = unique key.** The same part number can repeat under different suppliers.
 - **Tier 1 = "NA"** means no specific supplier (default value).
-- **Current Price** = the actual known price for the base month. Update this whenever the base month changes.
+- **Current Price** = the actual known price for one month. The column header **must name that month** (e.g. `Current Price ($) Aug 2026`, `August 2026`, `2026-08` or `08/2026`) — the API reads it to decide which months it can forecast. Update the prices *and* the header month together.
+  - Header month = last month → use `include_current_month: "YES"` (forecast starts this month).
+  - Header month = this month → use `include_current_month: "NO"` (forecast starts next month).
 
 ### Market data sheets (LME, Midwest, PPI, CNG)
 

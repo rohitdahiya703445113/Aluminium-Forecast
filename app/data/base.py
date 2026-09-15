@@ -57,3 +57,11 @@ class PartRepository(ABC):
         Return the known price for a part + supplier in a given month ($/lb).
         Returns None if not available.
         """
+
+    def get_price_month(self) -> Optional[str]:
+        """
+        Return the 'YYYY-MM' month the stored part prices belong to, or None
+        if the source cannot tell. Not abstract so existing repositories keep
+        working; used to explain price-month mismatches.
+        """
+        return None

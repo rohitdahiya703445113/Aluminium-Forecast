@@ -1,6 +1,8 @@
 """Pydantic request models for the forecast API."""
 
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class ForecastRequest(BaseModel):
@@ -20,3 +22,17 @@ class ForecastRequest(BaseModel):
         ),
         examples=["Kadon Aerospace"],
     )
+    include_current_month: Literal["YES", "NO"] = Field(
+        "NO",
+        description=(
+            "'YES' → forecast starts at the current month and covers 13 months "
+            "(current month + next 12). 'NO' (default) → forecast starts next "
+            "month and covers 12 months. Case-insensitive."
+        ),
+        examples=["NO"],
+    )
+
+    @field_validator("include_current_month", mode="before")
+    @classmethod
+    def _normalise_include_current_month(cls, v):
+        return v.strip().upper() if isinstance(v, str) else v

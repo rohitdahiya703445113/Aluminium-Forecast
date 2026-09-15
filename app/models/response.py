@@ -13,19 +13,19 @@ class QuarterContext(BaseModel):
         ..., description="Human-readable label, e.g. 'Q1-2026'"
     )
     mc_q: float = Field(
-        ..., description="MC_Q: avg(LME + Midwest) for current quarter ($/lb)"
+        ..., description="MC_Q: LME + Midwest of the predicted month ($/lb)"
     )
     lme_q_avg: float = Field(
-        ..., description="avg(LME) for current quarter months ($/lb)"
+        ..., description="LME of the predicted month ($/lb)"
     )
     midwest_q_avg: float = Field(
-        ..., description="avg(Midwest premium) for current quarter months ($/lb)"
+        ..., description="Midwest premium of the predicted month ($/lb)"
     )
     ppi_q: float = Field(
-        ..., description="PPI_Q: PPI of last month of current quarter"
+        ..., description="PPI_Q: PPI of the predicted month"
     )
     cng_q: float = Field(
-        ..., description="CNG_Q: CNG of last month of current quarter ($/lb)"
+        ..., description="CNG_Q: CNG of the predicted month ($/lb)"
     )
     ams_q: float = Field(
         ..., description="AMS_Q = (MC_Q × DF_c) + CNG_Q ($/lb)"
@@ -35,13 +35,13 @@ class QuarterContext(BaseModel):
         ..., description="Human-readable label, e.g. 'Q4-2025'"
     )
     mc_q_prev: float = Field(
-        ..., description="MC_Q-1: avg(LME + Midwest) for previous quarter ($/lb)"
+        ..., description="MC_Q-1: LME + Midwest of last month of previous quarter ($/lb)"
     )
     lme_q_prev_avg: float = Field(
-        ..., description="avg(LME) for previous quarter months ($/lb)"
+        ..., description="LME of last month of previous quarter ($/lb)"
     )
     midwest_q_prev_avg: float = Field(
-        ..., description="avg(Midwest premium) for previous quarter months ($/lb)"
+        ..., description="Midwest premium of last month of previous quarter ($/lb)"
     )
     ppi_q_prev: float = Field(
         ..., description="PPI_Q-1: PPI of last month of previous quarter"
@@ -151,7 +151,11 @@ class ForecastResponse(BaseModel):
     tier_1: str = Field(..., description="Tier 1 supplier name")
     pwt_lbs: float = Field(..., description="Part weight in lbs")
     base_year_month: str = Field(
-        ..., description="The month we are forecasting FROM (current known month)"
+        ...,
+        description=(
+            "Month of the known price used as the first P_current: the current "
+            "month by default, or last month when include_current_month='YES'"
+        ),
     )
     base_price: float = Field(
         ..., description="Known price at base_year_month ($/lb)"
@@ -160,7 +164,11 @@ class ForecastResponse(BaseModel):
         ..., description="UTC timestamp when the forecast was computed"
     )
     forecasts: list[MonthForecast] = Field(
-        ..., description="Month-by-month forecast for the next 12 months"
+        ...,
+        description=(
+            "Month-by-month forecast: next 12 months, or current month + "
+            "next 12 (13 total) when include_current_month='YES'"
+        ),
     )
 class ErrorResponse(BaseModel):
     """Standard error envelope."""

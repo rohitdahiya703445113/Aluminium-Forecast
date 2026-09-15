@@ -86,6 +86,10 @@ def get_forecast_excel(
     Both `part_number` and `tier_1` must match a row in the **Parts sheet**
     of `aluminium_data.xlsx` exactly. The current price is always read from
     that sheet — it cannot be overridden via the API.
+
+    **include_current_month** (optional, `"YES"` / `"NO"`, default `"NO"`):
+    - `"NO"`  → 12 months, starting next month.
+    - `"YES"` → 13 months, starting with the current month.
     """
     logger.info(
         "Forecast request: part_number=%s  tier_1=%s",
@@ -96,6 +100,7 @@ def get_forecast_excel(
             part_number=payload.part_number,
             tier_1=payload.tier_1,
             include_breakdown=True,   # factor breakdown only on single-part endpoint
+            include_current_month=(payload.include_current_month == "YES"),
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))

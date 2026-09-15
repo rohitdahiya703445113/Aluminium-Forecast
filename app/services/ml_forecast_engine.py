@@ -12,11 +12,11 @@ MODEL INPUT COLUMNS (must match training exactly)
 ──────────────────────────────────────────────────
   Weight          → PWt in lbs (from part master)
   Current Price   → P_current (actual for step 1, chained prediction after)
-  MC_Q            → avg(LME + Midwest) for current quarter ($/lb)
-  MC_Q-1          → avg(LME + Midwest) for previous quarter ($/lb)
-  PPI_Q           → PPI index at last month of current quarter
+  MC_Q            → LME + Midwest of the month being predicted ($/lb)
+  MC_Q-1          → LME + Midwest at last month of previous quarter ($/lb)
+  PPI_Q           → PPI index of the month being predicted
   PPI_Q-1         → PPI index at last month of previous quarter
-  CNG_Q           → CNG cost at last month of current quarter ($/lb)
+  CNG_Q           → CNG cost of the month being predicted ($/lb)
   CNG_Q-1         → CNG cost at last month of previous quarter ($/lb)
   Drauss Factor   → DF_c constant (1.44)
 
@@ -133,6 +133,34 @@ def _advance_month(year: int, month: int) -> tuple[int, int]:
     return (year + 1, 1) if month == 12 else (year, month + 1)
 
 
+def _prev_month(year: int, month: int) -> tuple[int, int]:
+    return (year - 1, 12) if month == 1 else (year, month - 1)
+
+
+def _price_month_error(
+    parts: PartRepository,
+    part_number: str,
+    tier_1: str,
+    needed_month: str,
+    include_current_month: bool,
+) -> ValueError:
+    """Explain why no P_current was found for *needed_month*."""
+    data_month = parts.get_price_month()
+    if data_month is not None and data_month != needed_month:
+        flag = "YES" if include_current_month else "NO"
+        return ValueError(
+            f"Part prices in the data store are for {_month_label(data_month)}, but "
+            f"include_current_month={flag} needs {_month_label(needed_month)} prices "
+            "as P_current. Update the price column (and the month in its header) "
+            "or change include_current_month."
+        )
+    return ValueError(
+        f"Current price not available for part_number='{part_number}' "
+        f"tier_1='{tier_1}' month={needed_month}. Make sure the price column "
+        "header names its month, e.g. 'Current Price ($) Aug 2026'."
+    )
+
+
 _MONTH_NAMES = [
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December",
@@ -156,30 +184,27 @@ def _require(value: Optional[float], description: str) -> float:
 
 def _compute_quarter_context(
     year: int,
-    quarter: int,
+    month: int,
     market: MarketDataRepository,
     df_c: float,
 ) -> QuarterContext:
+    quarter = _quarter_of_month(month)
     prev_year, prev_quarter = _prev_quarter(year, quarter)
 
-    # ── Current quarter ───────────────────────────────────────────────────
-    months_q = _quarter_months(year, quarter)
-    lme_q  = [_require(market.get_lme(m),              f"LME for {m}") for m in months_q]
-    mwp_q  = [_require(market.get_midwest_premium(m),  f"Midwest for {m}") for m in months_q]
-    mc_q   = sum(lme_q) / 3 + sum(mwp_q) / 3
-
-    last_q = _last_month_of_quarter(year, quarter)
-    ppi_q  = _require(market.get_ppi(last_q), f"PPI for {last_q}")
-    cng_q  = _require(market.get_cng(last_q), f"CNG for {last_q}")
+    # ── Current (predicted) month ─────────────────────────────────────────
+    target = f"{year}-{month:02d}"
+    lme_q  = _require(market.get_lme(target),             f"LME for {target}")
+    mwp_q  = _require(market.get_midwest_premium(target), f"Midwest for {target}")
+    mc_q   = lme_q + mwp_q
+    ppi_q  = _require(market.get_ppi(target), f"PPI for {target}")
+    cng_q  = _require(market.get_cng(target), f"CNG for {target}")
     ams_q  = mc_q * df_c + cng_q
 
-    # ── Previous quarter ──────────────────────────────────────────────────
-    months_qp = _quarter_months(prev_year, prev_quarter)
-    lme_qp = [_require(market.get_lme(m),             f"LME for {m}") for m in months_qp]
-    mwp_qp = [_require(market.get_midwest_premium(m), f"Midwest for {m}") for m in months_qp]
-    mc_q_prev = sum(lme_qp) / 3 + sum(mwp_qp) / 3
-
+    # ── Previous quarter (last month) ─────────────────────────────────────
     last_qp   = _last_month_of_quarter(prev_year, prev_quarter)
+    lme_qp    = _require(market.get_lme(last_qp),             f"LME for {last_qp}")
+    mwp_qp    = _require(market.get_midwest_premium(last_qp), f"Midwest for {last_qp}")
+    mc_q_prev = lme_qp + mwp_qp
     ppi_q_prev = _require(market.get_ppi(last_qp), f"PPI for {last_qp}")
     cng_q_prev = _require(market.get_cng(last_qp), f"CNG for {last_qp}")
     ams_q_prev = mc_q_prev * df_c + cng_q_prev
@@ -192,11 +217,15 @@ def _compute_quarter_context(
     return QuarterContext(
         quarter_label=_quarter_label(year, quarter),
         mc_q=round(mc_q, 6),
+        lme_q_avg=round(lme_q, 6),
+        midwest_q_avg=round(mwp_q, 6),
         ppi_q=round(ppi_q, 4),
         cng_q=round(cng_q, 6),
         ams_q=round(ams_q, 6),
         prev_quarter_label=_quarter_label(prev_year, prev_quarter),
         mc_q_prev=round(mc_q_prev, 6),
+        lme_q_prev_avg=round(lme_qp, 6),
+        midwest_q_prev_avg=round(mwp_qp, 6),
         ppi_q_prev=round(ppi_q_prev, 4),
         cng_q_prev=round(cng_q_prev, 6),
         ams_q_prev=round(ams_q_prev, 6),
@@ -232,9 +261,18 @@ class MLForecastEngine:
         self._df_c    = settings.DF_C
         self._horizon = settings.FORECAST_HORIZON_MONTHS
 
-    def forecast(self, part_number: str, tier_1: str) -> ForecastResponse:
+    def forecast(
+        self,
+        part_number: str,
+        tier_1: str,
+        include_current_month: bool = False,
+    ) -> ForecastResponse:
         """
         Produce a 12-month ML price forecast for part_number + tier_1.
+        With include_current_month=True the forecast starts at the current
+        month and covers 13 months (current month + next 12).
+        P_current for the first step is this month's price (False) or last
+        month's price (True); the data store must hold prices for that month.
 
         All quarterly inputs (MC_Q, PPI_Q, CNG_Q, etc.) are computed
         identically to the formula-based engine. The predicted price for
@@ -251,12 +289,20 @@ class MLForecastEngine:
         """
         model = _load_model()   # raises FileNotFoundError if missing
 
-        now_utc         = datetime.now(timezone.utc)
-        base_year_month = now_utc.strftime("%Y-%m")
+        now_utc       = datetime.now(timezone.utc)
+        current_month = now_utc.strftime("%Y-%m")
+        # P_current = price of the month just before the first forecast month:
+        #   include_current_month → LAST month's price, forecast starts this month
+        #   otherwise             → THIS month's price, forecast starts next month
+        if include_current_month:
+            price_year, price_month = _prev_month(now_utc.year, now_utc.month)
+            base_year_month = f"{price_year}-{price_month:02d}"
+        else:
+            base_year_month = current_month
 
         logger.info(
-            "ML forecast: part=%s  tier_1=%s  current_month=%s",
-            part_number, tier_1, base_year_month,
+            "ML forecast: part=%s  tier_1=%s  current_month=%s  price_month=%s",
+            part_number, tier_1, current_month, base_year_month,
         )
 
         # ── Part master ───────────────────────────────────────────────────
@@ -269,9 +315,8 @@ class MLForecastEngine:
 
         base_price = self._parts.get_base_price(part_number, tier_1, base_year_month)
         if base_price is None:
-            raise ValueError(
-                f"Current price not available for part_number='{part_number}' "
-                f"tier_1='{tier_1}' month={base_year_month}."
+            raise _price_month_error(
+                self._parts, part_number, tier_1, base_year_month, include_current_month
             )
 
         logger.info(
@@ -284,29 +329,25 @@ class MLForecastEngine:
         current_price = base_price
         forecasts: list[MonthForecast] = []
 
-        _quarter_cache: dict[tuple[int, int], QuarterContext] = {}
+        # First forecast month is always the month after the price month.
+        # include_current_month → 13 months (this month + next 12), else 12.
         forecast_year, forecast_month = _advance_month(base_year, base_month)
+        n_months = self._horizon + 1 if include_current_month else self._horizon
 
-        for step in range(self._horizon):
+        for step in range(n_months):
             year_month_key = f"{forecast_year}-{forecast_month:02d}"
-            quarter        = _quarter_of_month(forecast_month)
-            cache_key      = (forecast_year, quarter)
 
             logger.debug("ML step %d: forecasting %s", step + 1, year_month_key)
 
-            # ── Quarter context (cached per quarter) ──────────────────────
-            if cache_key not in _quarter_cache:
-                try:
-                    ctx = _compute_quarter_context(
-                        forecast_year, quarter, self._market, self._df_c
-                    )
-                    _quarter_cache[cache_key] = ctx
-                except ValueError as exc:
-                    raise ValueError(
-                        f"Cannot compute quarter context for {year_month_key}: {exc}"
-                    ) from exc
-            else:
-                ctx = _quarter_cache[cache_key]
+            # ── Context for this month (MC_Q / PPI_Q vary per month) ──────
+            try:
+                ctx = _compute_quarter_context(
+                    forecast_year, forecast_month, self._market, self._df_c
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    f"Cannot compute quarter context for {year_month_key}: {exc}"
+                ) from exc
 
             # ── Build model input row ─────────────────────────────────────
             input_df = pd.DataFrame([{

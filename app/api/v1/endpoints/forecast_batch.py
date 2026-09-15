@@ -9,7 +9,7 @@ POST /api/v1/forecast-batch
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from fastapi.responses import Response
 
 from app.data.base import MarketDataRepository, PartRepository
@@ -63,6 +63,13 @@ async def forecast_batch(
             "Duplicate (Part Number, Tier 1) pairs are silently deduplicated."
         ),
     ),
+    include_current_month: str = Form(
+        "NO",
+        description=(
+            "'YES' → start at the current month (13 monthly sheets). "
+            "'NO' (default) → start next month (12 monthly sheets)."
+        ),
+    ),
     engine: ForecastEngine = Depends(get_engine),
 ) -> Response:
     """
@@ -85,11 +92,21 @@ async def forecast_batch(
 
     Parts not found in the data store show an **ERROR row** instead of
     stopping the entire batch.
+
+    **include_current_month** (optional form field, `YES` / `NO`, default `NO`):
+    `YES` adds the current month as the first forecast month (13 sheets).
     """
     if not file.filename or not file.filename.lower().endswith(".xlsx"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only .xlsx files are accepted.",
+        )
+
+    include_current_month = include_current_month.strip().upper()
+    if include_current_month not in ("YES", "NO"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="include_current_month must be 'YES' or 'NO'.",
         )
 
     logger.info("Batch forecast request: file=%s", file.filename)
@@ -119,6 +136,7 @@ async def forecast_batch(
         workbook_bytes = build_forecast_workbook(
             part_tier_pairs=part_tier_pairs,
             engine=engine,
+            include_current_month=(include_current_month == "YES"),
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))

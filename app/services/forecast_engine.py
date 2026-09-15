@@ -8,13 +8,13 @@ P_next = P_current
 Where:
   AMS_Q     = (MC_Q  × DF_c) + CNG_Q
   AMS_Q-1   = (MC_Q-1 × DF_c) + CNG_Q-1
-  MC_Q      = avg(LME_q1, LME_q2, LME_q3) + avg(MWP_q1, MWP_q2, MWP_q3)
-              for the three months of the CURRENT quarter
-  MC_Q-1    = same calculation for the PREVIOUS quarter
+  MC_Q      = LME + MWP of the month being PREDICTED
+  MC_Q-1    = LME + MWP of the LAST month of the previous quarter
+              (previous to the quarter containing the predicted month)
   PPI_Factor = (PPI_Q - PPI_Q-1) / PPI_Q-1
-               where PPI_Q   = PPI of the LAST month of current quarter
+               where PPI_Q   = PPI of the month being PREDICTED
                      PPI_Q-1 = PPI of the LAST month of previous quarter
-  CNG_Q     = CNG of the LAST month of current quarter
+  CNG_Q     = CNG of the month being PREDICTED
   CNG_Q-1   = CNG of the LAST month of previous quarter
   DF_c      = 1.44 (constant)
   PWt       = part weight in lbs (per part number)
@@ -23,8 +23,8 @@ ITERATION LOGIC
 We are sitting in Feb 2026 (current month).
 We predict March 2026 first, then April, …, up to Jan 2027 (12 months).
 Each predicted price becomes the P_current for the next step.
-The quarter context (MC_Q, PPI_Q, CNG_Q) is fixed per calendar quarter,
-so months within the same quarter share the same quarterly inputs but each
+MC_Q, PPI_Q and CNG_Q change with every predicted month; MC_Q-1, PPI_Q-1 and
+CNG_Q-1 are anchored to the last month of the previous quarter. Each month
 uses the rolling predicted price as its P_current.
 """
 import logging
@@ -82,59 +82,52 @@ def _require(value: Optional[float], description: str) -> float:
 
 
 class _MCResult(NamedTuple):
-    mc:          float   # combined avg(LME) + avg(Midwest)  — used in formula
-    lme_avg:     float   # avg(LME) for the quarter          — used in breakdown
-    midwest_avg: float   # avg(Midwest) for the quarter      — used in breakdown
+    mc:      float   # LME + Midwest for the month  — used in formula
+    lme:     float   # LME for the month            — used in breakdown
+    midwest: float   # Midwest for the month        — used in breakdown
 
 def _compute_mc(
-    year: int,
-    quarter: int,
+    year_month: str,
     market_repo: MarketDataRepository,
 ) -> _MCResult:
     """
-    MC_Q = avg(LME over quarter months) + avg(Midwest over quarter months).
+    MC = LME + Midwest premium for a single 'YYYY-MM' month.
     Returns a named tuple with the combined value AND the two components
     separately so the caller can use them for factor breakdown without
     re-fetching data.
     """
-    months = _quarter_months(year, quarter)
-    lme_values = [
-        _require(market_repo.get_lme(m), f"LME for {m}") for m in months
-    ]
-    mwp_values = [
-        _require(market_repo.get_midwest_premium(m), f"Midwest premium for {m}")
-        for m in months
-    ]
-    lme_avg = sum(lme_values) / 3
-    mwp_avg = sum(mwp_values) / 3
-    mc = lme_avg + mwp_avg
-    logger.debug(
-        "MC_%s_%d: LME_avg=%.4f  MWP_avg=%.4f  MC=%.4f",
-        f"Q{quarter}", year, lme_avg, mwp_avg, mc,
+    lme = _require(market_repo.get_lme(year_month), f"LME for {year_month}")
+    mwp = _require(
+        market_repo.get_midwest_premium(year_month), f"Midwest premium for {year_month}"
     )
-    return _MCResult(mc=mc, lme_avg=lme_avg, midwest_avg=mwp_avg)
+    mc = lme + mwp
+    logger.debug("MC_%s: LME=%.4f  MWP=%.4f  MC=%.4f", year_month, lme, mwp, mc)
+    return _MCResult(mc=mc, lme=lme, midwest=mwp)
 
 def _compute_quarter_context(
     year: int,
-    quarter: int,
+    month: int,
     market_repo: MarketDataRepository,
     df_c: float,
 ) -> QuarterContext:
     """
-    Build the full QuarterContext (current + previous quarter) for a given
-    target quarter.  Raises ValueError if any required data is missing.
+    Build the full QuarterContext for the month being predicted.
+      MC_Q / PPI_Q / CNG_Q       → the predicted month itself
+      MC_Q-1 / PPI_Q-1 / CNG_Q-1 → last month of the previous quarter
+    Raises ValueError if any required data is missing.
     """
+    quarter = _quarter_of_month(month)
     prev_year, prev_quarter = _prev_quarter(year, quarter)
-    # ── Current quarter ───────────────────────────────────────────────────
-    mc_result = _compute_mc(year, quarter, market_repo)
-    last_month_q = _last_month_of_quarter(year, quarter)
-    ppi_q = _require(market_repo.get_ppi(last_month_q), f"PPI for {last_month_q}")
-    cng_q = _require(market_repo.get_cng(last_month_q), f"CNG for {last_month_q}")
+    # ── Current (predicted) month ─────────────────────────────────────────
+    target_month = f"{year}-{month:02d}"
+    mc_result = _compute_mc(target_month, market_repo)
+    ppi_q = _require(market_repo.get_ppi(target_month), f"PPI for {target_month}")
+    cng_q = _require(market_repo.get_cng(target_month), f"CNG for {target_month}")
     ams_q = (mc_result.mc * df_c) + cng_q
 
-    # ── Previous quarter ─────────────────────────────────────────────────
-    mc_result_prev = _compute_mc(prev_year, prev_quarter, market_repo)
+    # ── Previous quarter (last month) ─────────────────────────────────────
     last_month_q_prev = _last_month_of_quarter(prev_year, prev_quarter)
+    mc_result_prev = _compute_mc(last_month_q_prev, market_repo)
     ppi_q_prev = _require(
         market_repo.get_ppi(last_month_q_prev), f"PPI for {last_month_q_prev}"
     )
@@ -148,23 +141,24 @@ def _compute_quarter_context(
     ppi_factor = (ppi_q - ppi_q_prev) / ppi_q_prev
     ams_delta = ams_q - ams_q_prev
     logger.debug(
-        "QuarterContext %s: MC_Q=%.4f AMS_Q=%.4f | MC_Q-1=%.4f AMS_Q-1=%.4f | "
+        "QuarterContext %s: MC_Q=%.4f AMS_Q=%.4f | MC_Q-1(%s)=%.4f AMS_Q-1=%.4f | "
         "PPI_Factor=%.6f AMS_delta=%.4f",
-        _quarter_label(year, quarter),
-        mc_result.mc, ams_q, mc_result_prev.mc, ams_q_prev, ppi_factor, ams_delta,
+        target_month,
+        mc_result.mc, ams_q, last_month_q_prev, mc_result_prev.mc, ams_q_prev,
+        ppi_factor, ams_delta,
     )
     return QuarterContext(
         quarter_label=_quarter_label(year, quarter),
         mc_q=round(mc_result.mc, 6),
-        lme_q_avg=round(mc_result.lme_avg, 6),
-        midwest_q_avg=round(mc_result.midwest_avg, 6),
+        lme_q_avg=round(mc_result.lme, 6),
+        midwest_q_avg=round(mc_result.midwest, 6),
         ppi_q=round(ppi_q, 4),
         cng_q=round(cng_q, 6),
         ams_q=round(ams_q, 6),
         prev_quarter_label=_quarter_label(prev_year, prev_quarter),
         mc_q_prev=round(mc_result_prev.mc, 6),
-        lme_q_prev_avg=round(mc_result_prev.lme_avg, 6),
-        midwest_q_prev_avg=round(mc_result_prev.midwest_avg, 6),
+        lme_q_prev_avg=round(mc_result_prev.lme, 6),
+        midwest_q_prev_avg=round(mc_result_prev.midwest, 6),
         ppi_q_prev=round(ppi_q_prev, 4),
         cng_q_prev=round(cng_q_prev, 6),
         ams_q_prev=round(ams_q_prev, 6),
@@ -187,6 +181,35 @@ def _advance_month(year: int, month: int) -> tuple[int, int]:
     if month == 12:
         return year + 1, 1
     return year, month + 1
+
+def _prev_month(year: int, month: int) -> tuple[int, int]:
+    """Return (year, month) one calendar month earlier."""
+    if month == 1:
+        return year - 1, 12
+    return year, month - 1
+
+def _price_month_error(
+    parts: PartRepository,
+    part_number: str,
+    tier_1: str,
+    needed_month: str,
+    include_current_month: bool,
+) -> ValueError:
+    """Explain why no P_current was found for *needed_month*."""
+    data_month = parts.get_price_month()
+    if data_month is not None and data_month != needed_month:
+        flag = "YES" if include_current_month else "NO"
+        return ValueError(
+            f"Part prices in the data store are for {_month_label(data_month)}, but "
+            f"include_current_month={flag} needs {_month_label(needed_month)} prices "
+            "as P_current. Update the price column (and the month in its header) "
+            "or change include_current_month."
+        )
+    return ValueError(
+        f"Current price not available for part_number='{part_number}' "
+        f"tier_1='{tier_1}' month={needed_month}. Make sure the price column "
+        "header names its month, e.g. 'Current Price ($) Aug 2026'."
+    )
 
 def _compute_price_breakdown(
     ctx: "QuarterContext",
@@ -273,6 +296,7 @@ class ForecastEngine:
         part_number: str,
         tier_1: str,
         include_breakdown: bool = False,
+        include_current_month: bool = False,
     ) -> ForecastResponse:
         """
         Produce a 12-month price forecast for *part_number* + *tier_1*.
@@ -283,6 +307,14 @@ class ForecastEngine:
         tier_1:
             Supplier name (e.g. "Kadon Aerospace", "NA").
             Together with part_number forms the unique lookup key.
+        include_current_month:
+            False (default) → forecast the next 12 months, starting next month.
+            True            → start at the current month and forecast 13 months
+                              (current month + next 12).
+            P_current for the first step is the price of the month just before
+            the first forecast month: this month's price for False, last
+            month's price for True. The data store must hold prices for that
+            month, otherwise a ValueError explains the mismatch.
         Returns
         ------
         ForecastResponse
@@ -292,10 +324,18 @@ class ForecastEngine:
             If the part+tier_1 combination is unknown or price unavailable.
         """
         now_utc = datetime.now(timezone.utc)
-        base_year_month = now_utc.strftime("%Y-%m")
+        current_month = now_utc.strftime("%Y-%m")
+        # P_current = price of the month just before the first forecast month:
+        #   include_current_month → LAST month's price, forecast starts this month
+        #   otherwise             → THIS month's price, forecast starts next month
+        if include_current_month:
+            price_year, price_month = _prev_month(now_utc.year, now_utc.month)
+            base_year_month = f"{price_year}-{price_month:02d}"
+        else:
+            base_year_month = current_month
         logger.info(
-            "Starting forecast: part=%s  tier_1=%s  current_month=%s",
-            part_number, tier_1, base_year_month,
+            "Starting forecast: part=%s  tier_1=%s  current_month=%s  price_month=%s",
+            part_number, tier_1, current_month, base_year_month,
         )
         # ── Part weight ───────────────────────────────────────────────────
         pwt = self._parts.get_part_weight(part_number, tier_1)
@@ -307,9 +347,8 @@ class ForecastEngine:
         # ── Base price — always from data store ───────────────────────────
         base_price = self._parts.get_base_price(part_number, tier_1, base_year_month)
         if base_price is None:
-            raise ValueError(
-                f"Current price not available for part_number='{part_number}' "
-                f"tier_1='{tier_1}' month={base_year_month}."
+            raise _price_month_error(
+                self._parts, part_number, tier_1, base_year_month, include_current_month
             )
         logger.info(
             "Part=%s  Tier1=%s  PWt=%.2f lbs  P_base=%.4f $/lb",
@@ -319,28 +358,22 @@ class ForecastEngine:
         base_year, base_month = map(int, base_year_month.split("-"))
         current_price = base_price
         forecasts: list[MonthForecast] = []
-        # Cache quarter contexts so we don't recompute for every month in the
-        # same quarter (LME/PPI/CNG lookup + avg is idempotent but costly).
-        _quarter_cache: dict[tuple[int, int], QuarterContext] = {}
+        # First forecast month is always the month after the price month.
+        # include_current_month → 13 months (this month + next 12), else 12.
         forecast_year, forecast_month = _advance_month(base_year, base_month)
-        for step in range(self._horizon):
+        n_months = self._horizon + 1 if include_current_month else self._horizon
+        for step in range(n_months):
             year_month_key = f"{forecast_year}-{forecast_month:02d}"
-            quarter = _quarter_of_month(forecast_month)
-            cache_key = (forecast_year, quarter)
             logger.debug("Step %d: forecasting %s", step + 1, year_month_key)
-            # ── Build quarter context (cached per quarter) ────────────────
-            if cache_key not in _quarter_cache:
-                try:
-                    ctx = _compute_quarter_context(
-                        forecast_year, quarter, self._market, self._df_c
-                    )
-                    _quarter_cache[cache_key] = ctx
-                except ValueError as exc:
-                    raise ValueError(
-                        f"Cannot compute quarter context for {year_month_key}: {exc}"
-                    ) from exc
-            else:
-                ctx = _quarter_cache[cache_key]
+            # ── Build context for this month (MC_Q / PPI_Q vary per month) ─
+            try:
+                ctx = _compute_quarter_context(
+                    forecast_year, forecast_month, self._market, self._df_c
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    f"Cannot compute quarter context for {year_month_key}: {exc}"
+                ) from exc
             # ── Core formula ──────────────────────────────────────────────
             # P_next = P_current + [(AMS_Q - AMS_Q-1) × PWt] + (PPI_Factor × P_current)
             # ── THIS LINE IS NOT TOUCHED BY THE BREAKDOWN FEATURE ─────────

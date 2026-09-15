@@ -9,7 +9,9 @@ Columns (by position):
   0 : Part Number
   1 : Tier 1          ← supplier name (e.g. "Kadon Aerospace", "NA")
   2 : Weight (lbs)
-  3 : Current Price ($)
+  3 : Current Price ($)  ← header MUST name the month the prices are for,
+                           e.g. "Current Price ($) Aug 2026" (also accepts
+                           "August 2026", "2026-08", "08/2026")
 
 The unique key for every part lookup is (Part Number, Tier 1).
 
@@ -19,15 +21,16 @@ Implement MarketDataRepository / PartRepository from app/data/base.py
 and update DI in app/api/v1/endpoints/forecast_excel.py.
 """
 
+import calendar
 import logging
 import os
+import re
 from functools import lru_cache
 from typing import Optional
 
 import pandas as pd
 
 from app.data.base import MarketDataRepository, PartRepository
-from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +122,33 @@ def _find_part_row(part_number: str, tier_1: str) -> Optional[pd.Series]:
     return match.iloc[0]
 
 
+_MONTH_NAMES = {name.lower(): i for i, name in enumerate(calendar.month_name) if name}
+
+
+def _parse_price_month(header) -> Optional[str]:
+    """
+    Extract the 'YYYY-MM' price month from the Parts sheet price column header.
+    Accepts e.g. 'Current Price ($)\\nAug 2026', 'Price August-2026',
+    'Price Sept 2026', 'Price 2026-08', 'Price 08/2026', or a date-typed
+    header cell. Returns None if no month can be found.
+    """
+    if hasattr(header, "strftime"):                      # date-typed header cell
+        return header.strftime("%Y-%m")
+    text = str(header)
+    for word, year in re.findall(r"\b([A-Za-z]{3,9})[\s\-',.]*(\d{4})", text):
+        word = word.lower()
+        month = next((i for name, i in _MONTH_NAMES.items() if name.startswith(word)), None)
+        if month:
+            return f"{year}-{month:02d}"
+    m = re.search(r"(\d{4})[-/](\d{1,2})(?!\d)", text)   # 2026-08
+    if m and 1 <= int(m.group(2)) <= 12:
+        return f"{m.group(1)}-{int(m.group(2)):02d}"
+    m = re.search(r"(?<!\d)(\d{1,2})[-/](\d{4})", text)  # 08/2026
+    if m and 1 <= int(m.group(1)) <= 12:
+        return f"{m.group(2)}-{int(m.group(1)):02d}"
+    return None
+
+
 def get_all_parts() -> list[dict]:
     """
     Return all rows from the Parts sheet as a list of dicts.
@@ -129,6 +159,7 @@ def get_all_parts() -> list[dict]:
     tier1_col = df.columns[1]
     wt_col    = df.columns[2]
     price_col = df.columns[3]
+    price_month = _parse_price_month(price_col)
 
     parts = []
     for _, row in df.iterrows():
@@ -143,6 +174,7 @@ def get_all_parts() -> list[dict]:
                 "tier_1":        str(row[tier1_col]).strip() if str(row[tier1_col]) != "nan" else "NA",
                 "weight_lbs":    float(wt_val),
                 "current_price": float(price_val),
+                "price_month":   price_month,
             })
         except (ValueError, TypeError):
             logger.warning(
@@ -182,12 +214,18 @@ class ExcelPartRepository(PartRepository):
     Reads part master from the Parts sheet.
     Lookup key = (Part Number, Tier 1) — both must match.
     """
-    @property
-    def _PRICE_MONTH(self) -> str:
-        return datetime.now(timezone.utc).strftime("%Y-%m")
+    def get_price_month(self) -> Optional[str]:
+        """Month the Parts sheet prices are for, read from the price column header."""
+        header = _get_parts_df().columns[3]
+        month = _parse_price_month(header)
+        if month is None:
+            logger.warning(
+                "Cannot read price month from Parts column header %r — "
+                "name it like 'Current Price ($) Aug 2026'", header,
+            )
+        return month
         
 
-    _PRICE_MONTH = _PRICE_MONTH   # month for which prices are stored in Excel
 
     def get_part_weight(self, part_number: str, tier_1: str) -> Optional[float]:
         row = _find_part_row(part_number, tier_1)
@@ -204,7 +242,7 @@ class ExcelPartRepository(PartRepository):
             return None
 
     def get_base_price(self, part_number: str, tier_1: str, year_month: str) -> Optional[float]:
-        if year_month != self._PRICE_MONTH:
+        if year_month != self.get_price_month():
             return None
         row = _find_part_row(part_number, tier_1)
         if row is None:

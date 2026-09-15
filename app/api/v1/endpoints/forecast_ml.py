@@ -97,8 +97,12 @@ def get_forecast_ml(
     **Same as `/api/v1/forecast-excel` except:**
     - `predicted_price` is produced by the ML model, not the analytical formula
     - Prices are chained: Sep prediction → Oct `Current Price` input → and so on
+    - `include_current_month: "YES"` starts at the current month (13 months);
+      default `"NO"` starts next month (12 months)
     - All intermediate variables (MC_Q, AMS_Q, PPI_Factor, etc.) are still
-      computed from `aluminium_data.xlsx` using the same quarterly logic
+      computed from `aluminium_data.xlsx` using the same logic
+      (MC_Q / PPI_Q = predicted month; MC_Q-1 / PPI_Q-1 = last month of
+      previous quarter)
 
     **Model input columns (in order):**
     `Weight | Current Price | MC_Q | MC_Q-1 | PPI_Q | PPI_Q-1 | CNG_Q | CNG_Q-1 | Drauss Factor`
@@ -115,6 +119,7 @@ def get_forecast_ml(
         result = engine.forecast(
             part_number=payload.part_number,
             tier_1=payload.tier_1,
+            include_current_month=(payload.include_current_month == "YES"),
         )
 
     except FileNotFoundError as exc:

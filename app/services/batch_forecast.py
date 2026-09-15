@@ -3,7 +3,8 @@ Batch forecast service.
 
 Reads (Part Number, Tier 1) pairs from an uploaded Excel, runs the
 forecast engine for each unique combination, and writes a result
-workbook with one sheet per forecast month (12 sheets) plus a Summary.
+workbook with one sheet per forecast month (12 sheets, or 13 when the
+current month is included) plus a Summary.
 
 COLUMN LAYOUT (per monthly sheet)
 ──────────────────────────────────
@@ -171,9 +172,13 @@ def read_parts_from_upload(file_bytes: bytes) -> list[tuple[str, str]]:
 def build_forecast_workbook(
     part_tier_pairs: list[tuple[str, str]],
     engine: ForecastEngine,
+    include_current_month: bool = False,
 ) -> bytes:
     """
     Run forecasts for all (part_number, tier_1) pairs and build output workbook.
+
+    include_current_month=True adds the current month as the first forecast
+    month (13 monthly sheets instead of 12).
 
     Failed rows show an ERROR message instead of stopping the batch.
     Returns raw bytes of the generated .xlsx workbook.
@@ -183,7 +188,11 @@ def build_forecast_workbook(
 
     for pn, t1 in part_tier_pairs:
         try:
-            results[(pn, t1)] = engine.forecast(part_number=pn, tier_1=t1)
+            results[(pn, t1)] = engine.forecast(
+                part_number=pn,
+                tier_1=t1,
+                include_current_month=include_current_month,
+            )
             logger.debug("Forecast OK: %s / %s", pn, t1)
         except Exception as exc:
             results[(pn, t1)] = exc
@@ -197,7 +206,11 @@ def build_forecast_workbook(
             break
 
     if not month_labels:
-        raise ValueError("All parts failed forecasting — cannot generate output workbook.")
+        first_error = next(iter(results.values()), None)
+        raise ValueError(
+            "All parts failed forecasting — cannot generate output workbook. "
+            f"First error: {first_error}"
+        )
 
     # ── Step 3: build workbook ────────────────────────────────────────────
     wb = openpyxl.Workbook()

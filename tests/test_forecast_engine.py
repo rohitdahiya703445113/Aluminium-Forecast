@@ -153,15 +153,26 @@ class TestForecastEngineHappyPath:
                 f"base_price_used={curr_base} != prev predicted={prev_predicted}"
             )
 
-    def test_quarter_context_shared_within_quarter(self):
-        """All months in the same calendar quarter share the same MC_Q and AMS_Q."""
+    def test_quarter_context_uses_predicted_month_and_prev_quarter_end(self):
+        """MC_Q / PPI_Q come from the predicted month; MC_Q-1 / PPI_Q-1 from the
+        last month of the previous quarter (shared by all months in a quarter)."""
         engine = make_engine()
+        market = HardcodedMarketDataRepository()
         result = engine.forecast("ALU-1001", base_year_month="2026-02")
-        # April, May, June are all Q2-2026
+        # April, May, June are all Q2-2026 → previous quarter ends 2026-03
         q2_months = [f for f in result.forecasts if f.quarter_context.quarter_label == "Q2-2026"]
         assert len(q2_months) == 3
-        mc_q_values = {f.quarter_context.mc_q for f in q2_months}
-        assert len(mc_q_values) == 1, "MC_Q should be identical for all months in a quarter"
+        for f in q2_months:
+            ctx = f.quarter_context
+            ym = f.year_month
+            assert ctx.mc_q == pytest.approx(
+                market.get_lme(ym) + market.get_midwest_premium(ym), abs=1e-6
+            )
+            assert ctx.ppi_q == pytest.approx(market.get_ppi(ym), abs=1e-4)
+            assert ctx.mc_q_prev == pytest.approx(
+                market.get_lme("2026-03") + market.get_midwest_premium("2026-03"), abs=1e-6
+            )
+            assert ctx.ppi_q_prev == pytest.approx(market.get_ppi("2026-03"), abs=1e-4)
 
     def test_all_parts_can_be_forecasted(self):
         engine = make_engine()

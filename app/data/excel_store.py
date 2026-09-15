@@ -27,6 +27,7 @@ from typing import Optional
 import pandas as pd
 
 from app.data.base import MarketDataRepository, PartRepository
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -181,8 +182,12 @@ class ExcelPartRepository(PartRepository):
     Reads part master from the Parts sheet.
     Lookup key = (Part Number, Tier 1) — both must match.
     """
+    @property
+    def _PRICE_MONTH(self) -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m")
+        
 
-    _PRICE_MONTH = "2026-08"   # month for which prices are stored in Excel
+    _PRICE_MONTH = _PRICE_MONTH   # month for which prices are stored in Excel
 
     def get_part_weight(self, part_number: str, tier_1: str) -> Optional[float]:
         row = _find_part_row(part_number, tier_1)

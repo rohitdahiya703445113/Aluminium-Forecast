@@ -19,7 +19,7 @@ class QuarterContext(BaseModel):
         ..., description="Human-readable label, e.g. 'Q1-2026'"
     )
     mc_q: float = Field(
-        ..., description="MC_Q: LME + Midwest of the predicted month ($/lb)"
+        ..., description="MC_Q: (LME + Midwest of the predicted month) × 0.91 + 1.25 ($/lb)"
     )
     lme_q: float = Field(
         ..., description="LME of the predicted month ($/lb)"
@@ -31,7 +31,7 @@ class QuarterContext(BaseModel):
         ..., description="PPI_Q: PPI of the predicted month"
     )
     cng_q: float = Field(
-        ..., description="CNG_Q: CNG of the predicted month ($/lb)"
+        ..., description="CNG_Q: from the request, same for every month ($/lb)"
     )
     ams_q: float = Field(
         ..., description="AMS_Q = (MC_Q × DF_c) + CNG_Q ($/lb)"
@@ -41,7 +41,7 @@ class QuarterContext(BaseModel):
         ..., description="Human-readable label, e.g. 'Q4-2025'"
     )
     mc_q_1: float = Field(
-        ..., alias="mc_q-1", description="MC_Q-1: LME + Midwest of last month of previous quarter ($/lb)"
+        ..., alias="mc_q-1", description="MC_Q-1: (LME + Midwest of last month of previous quarter) × 0.91 + 1.25 ($/lb)"
     )
     lme_q_1: float = Field(
         ..., alias="lme_q-1", description="LME of last month of previous quarter ($/lb)"
@@ -50,10 +50,10 @@ class QuarterContext(BaseModel):
         ..., alias="midwest_q-1", description="Midwest premium of last month of previous quarter ($/lb)"
     )
     ppi_q_1: float = Field(
-        ..., alias="ppi_q-1", description="PPI_Q-1: PPI of last month of previous quarter"
+        ..., alias="ppi_q-1", description="PPI_Q-1: average PPI of the three months of the previous quarter"
     )
     cng_q_1: float = Field(
-        ..., alias="cng_q-1", description="CNG_Q-1: CNG of last month of previous quarter ($/lb)"
+        ..., alias="cng_q-1", description="CNG_Q-1: from the request, same for every month ($/lb)"
     )
     ams_q_1: float = Field(
         ..., alias="ams_q-1", description="AMS_Q-1 = (MC_Q-1 × DF_c) + CNG_Q-1 ($/lb)"
@@ -91,10 +91,11 @@ class PriceChangeBreakdown(BaseModel):
       P_next - P_current
         = [(AMS_Q - AMS_Q-1) × PWt]  +  [PPI_Factor × P_current]
         = [(MC_Q - MC_Q-1) × DF_c + (CNG_Q - CNG_Q-1)] × PWt  +  PPI_effect
-      MC_Q - MC_Q-1 = (lme_q - lme_q-1) + (midwest_q - midwest_q-1)
+      MC = (LME + Midwest) × 0.91 + 1.25, so the 1.25 cancels:
+      MC_Q - MC_Q-1 = 0.91 × [(lme_q - lme_q-1) + (midwest_q - midwest_q-1)]
       So:
-        lme_effect     = (lme_q - lme_q-1) × DF_c × PWt
-        midwest_effect = (midwest_q - midwest_q-1) × DF_c × PWt
+        lme_effect     = (lme_q - lme_q-1) × 0.91 × DF_c × PWt
+        midwest_effect = (midwest_q - midwest_q-1) × 0.91 × DF_c × PWt
         cng_effect     = (CNG_Q - CNG_Q-1) × PWt
         ppi_effect     = PPI_Factor × P_current
     """

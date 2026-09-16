@@ -30,11 +30,6 @@ class MarketDataRepository(ABC):
     def get_ppi(self, year_month: str) -> Optional[float]:
         """PPI index value for the given month (dimensionless)."""
 
-    @abstractmethod
-    def get_cng(self, year_month: str) -> Optional[float]:
-        """CNG cost for the given month ($/lb)."""
-
-
 class PartRepository(ABC):
     """
     Provides part master data.

@@ -211,7 +211,6 @@ class TestForecastEngineErrors:
         market_mock.get_lme.return_value = None   # simulate missing LME
         market_mock.get_midwest_premium.return_value = 0.18
         market_mock.get_ppi.return_value = 320.0
-        market_mock.get_cng.return_value = 0.03
 
         part_mock = MagicMock(spec=PartRepository)
         part_mock.get_part_weight.return_value = 2.5

@@ -70,6 +70,14 @@ async def forecast_batch(
             "'NO' (default) → start next month (12 monthly sheets)."
         ),
     ),
+    cng_q: float = Form(
+        ..., description="CNG_Q ($/lb), used unchanged for every forecast month."
+    ),
+    cng_q_1: float = Form(
+        ...,
+        alias="cng_q-1",
+        description="CNG_Q-1 ($/lb), used unchanged for every forecast month.",
+    ),
     engine: ForecastEngine = Depends(get_engine),
 ) -> Response:
     """
@@ -92,6 +100,9 @@ async def forecast_batch(
 
     Parts not found in the data store show an **ERROR row** instead of
     stopping the entire batch.
+
+    **cng_q** and **cng_q-1** (required form fields, $/lb): CNG values used
+    unchanged for every forecast month.
 
     **include_current_month** (optional form field, `YES` / `NO`, default `NO`):
     `YES` adds the current month as the first forecast month (13 sheets).
@@ -136,6 +147,8 @@ async def forecast_batch(
         workbook_bytes = build_forecast_workbook(
             part_tier_pairs=part_tier_pairs,
             engine=engine,
+            cng_q=cng_q,
+            cng_q_1=cng_q_1,
             include_current_month=(include_current_month == "YES"),
         )
     except ValueError as exc:

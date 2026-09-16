@@ -12,12 +12,12 @@ MODEL INPUT COLUMNS (must match training exactly)
 ──────────────────────────────────────────────────
   Weight          → PWt in lbs (from part master)
   Current Price   → P_current (actual for step 1, chained prediction after)
-  MC_Q            → LME + Midwest of the month being predicted ($/lb)
-  MC_Q-1          → LME + Midwest at last month of previous quarter ($/lb)
+  MC_Q            → (LME + Midwest of the predicted month) × 0.91 + 1.25 ($/lb)
+  MC_Q-1          → (LME + Midwest at last month of previous quarter) × 0.91 + 1.25
   PPI_Q           → PPI index of the month being predicted
-  PPI_Q-1         → PPI index at last month of previous quarter
-  CNG_Q           → CNG cost of the month being predicted ($/lb)
-  CNG_Q-1         → CNG cost at last month of previous quarter ($/lb)
+  PPI_Q-1         → average PPI of the previous quarter's three months
+  CNG_Q           → from the request, constant for every month ($/lb)
+  CNG_Q-1         → from the request, constant for every month ($/lb)
   Drauss Factor   → DF_c constant (1.44)
 
 ISOLATION GUARANTEE
@@ -187,30 +187,33 @@ def _compute_quarter_context(
     month: int,
     market: MarketDataRepository,
     df_c: float,
+    cng_q: float,
+    cng_q_1: float,
 ) -> QuarterContext:
     quarter = _quarter_of_month(month)
     prev_year, prev_quarter = _prev_quarter(year, quarter)
+    mc_mult, mc_offset = settings.MC_MULTIPLIER, settings.MC_OFFSET
 
     # ── Current (predicted) month ─────────────────────────────────────────
     target = f"{year}-{month:02d}"
     lme_q  = _require(market.get_lme(target),             f"LME for {target}")
     mwp_q  = _require(market.get_midwest_premium(target), f"Midwest for {target}")
-    mc_q   = lme_q + mwp_q
+    mc_q   = (lme_q + mwp_q) * mc_mult + mc_offset
     ppi_q  = _require(market.get_ppi(target), f"PPI for {target}")
-    cng_q  = _require(market.get_cng(target), f"CNG for {target}")
     ams_q  = mc_q * df_c + cng_q
 
-    # ── Previous quarter (last month) ─────────────────────────────────────
+    # ── Previous quarter ──────────────────────────────────────────────────
     last_qp   = _last_month_of_quarter(prev_year, prev_quarter)
     lme_qp    = _require(market.get_lme(last_qp),             f"LME for {last_qp}")
     mwp_qp    = _require(market.get_midwest_premium(last_qp), f"Midwest for {last_qp}")
-    mc_q_prev = lme_qp + mwp_qp
-    ppi_q_prev = _require(market.get_ppi(last_qp), f"PPI for {last_qp}")
-    cng_q_prev = _require(market.get_cng(last_qp), f"CNG for {last_qp}")
-    ams_q_prev = mc_q_prev * df_c + cng_q_prev
+    mc_q_prev = (lme_qp + mwp_qp) * mc_mult + mc_offset
+    ppi_qp    = [_require(market.get_ppi(m), f"PPI for {m}")
+                 for m in _quarter_months(prev_year, prev_quarter)]
+    ppi_q_prev = sum(ppi_qp) / 3
+    ams_q_prev = mc_q_prev * df_c + cng_q_1
 
     if ppi_q_prev == 0:
-        raise ValueError(f"PPI_Q-1 is zero for {last_qp}")
+        raise ValueError(f"PPI_Q-1 is zero for {_quarter_label(prev_year, prev_quarter)}")
     ppi_factor = (ppi_q - ppi_q_prev) / ppi_q_prev
     ams_delta  = ams_q - ams_q_prev
 
@@ -227,7 +230,7 @@ def _compute_quarter_context(
         lme_q_1=round(lme_qp, 6),
         midwest_q_1=round(mwp_qp, 6),
         ppi_q_1=round(ppi_q_prev, 4),
-        cng_q_1=round(cng_q_prev, 6),
+        cng_q_1=round(cng_q_1, 6),
         ams_q_1=round(ams_q_prev, 6),
         ppi_factor=round(ppi_factor, 8),
         ams_delta=round(ams_delta, 6),
@@ -265,6 +268,8 @@ class MLForecastEngine:
         self,
         part_number: str,
         tier_1: str,
+        cng_q: float,
+        cng_q_1: float,
         include_current_month: bool = False,
     ) -> ForecastResponse:
         """
@@ -342,7 +347,7 @@ class MLForecastEngine:
             # ── Context for this month (MC_Q / PPI_Q vary per month) ──────
             try:
                 ctx = _compute_quarter_context(
-                    forecast_year, forecast_month, self._market, self._df_c
+                    forecast_year, forecast_month, self._market, self._df_c, cng_q, cng_q_1
                 )
             except ValueError as exc:
                 raise ValueError(

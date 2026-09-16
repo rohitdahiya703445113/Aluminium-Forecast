@@ -119,6 +119,8 @@ def get_forecast_ml(
         result = engine.forecast(
             part_number=payload.part_number,
             tier_1=payload.tier_1,
+            cng_q=payload.cng_q,
+            cng_q_1=payload.cng_q_1,
             include_current_month=(payload.include_current_month == "YES"),
         )
 

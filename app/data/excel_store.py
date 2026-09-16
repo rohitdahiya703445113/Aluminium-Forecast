@@ -1,7 +1,8 @@
 """
 Excel-backed market data + part master repository.
 
-Reads aluminium_data.xlsx (5 sheets: Parts, LME, Midwest, PPI, CNG).
+Reads aluminium_data.xlsx (4 sheets: Parts, LME, Midwest, PPI).
+CNG values are not read from Excel — they come from the request body.
 
 PARTS SHEET CONTRACT
 ────────────────────
@@ -52,7 +53,7 @@ def _load_workbook_data(path: str) -> dict[str, pd.DataFrame]:
         )
     sheets = pd.read_excel(
         path,
-        sheet_name=["Parts", "LME", "Midwest", "PPI", "CNG"],
+        sheet_name=["Parts", "LME", "Midwest", "PPI"],
         engine="openpyxl",
         dtype=str,          # read everything as str first; we cast per column
         keep_default_na=False,  # prevent 'NA', 'N/A' etc. from becoming NaN
@@ -188,7 +189,7 @@ def get_all_parts() -> list[dict]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ExcelMarketDataRepository(MarketDataRepository):
-    """Reads LME, Midwest, PPI, CNG from aluminium_data.xlsx (all $/lb)."""
+    """Reads LME, Midwest, PPI from aluminium_data.xlsx."""
 
     def _lookup(self, sheet: str, year_month: str, label: str) -> Optional[float]:
         value = _month_lookup(sheet).get(year_month)
@@ -204,10 +205,6 @@ class ExcelMarketDataRepository(MarketDataRepository):
 
     def get_ppi(self, year_month: str) -> Optional[float]:
         return self._lookup("PPI", year_month, "PPI")
-
-    def get_cng(self, year_month: str) -> Optional[float]:
-        return self._lookup("CNG", year_month, "CNG")
-
 
 class ExcelPartRepository(PartRepository):
     """

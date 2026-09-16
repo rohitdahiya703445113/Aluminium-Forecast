@@ -21,13 +21,13 @@ A production-grade FastAPI service that forecasts aluminium part prices for the 
 
 ## 1. Project Overview
 
-This service predicts the price of aluminium parts for the **next 12 calendar months**, starting from the current month. Prices are forecast **quarter by quarter** — the same quarterly market data (LME, Midwest, PPI, CNG) applies to all three months within a quarter, and each month's predicted price is used as the base for the next month (chained forecasting).
+This service predicts the price of aluminium parts for the **next 12 calendar months**, starting from the current month. Prices are forecast **quarter by quarter** — the same quarterly market data (LME, Midwest, PPI) applies to all three months within a quarter, and each month's predicted price is used as the base for the next month (chained forecasting).
 
 **Key concepts:**
 - **Part Number + Tier 1** together form the unique identifier for a part. The same part number can appear under multiple Tier 1 suppliers (e.g. "Kadon Aerospace", "Point Precision Inc.", "NA") with different weights and prices.
 - **PWt (Part Weight in lbs)** is a fixed property of each part + supplier combination.
 - **Current price** is always read from `aluminium_data.xlsx` — it cannot be overridden via the API.
-- All market data (LME, Midwest premium, PPI, CNG) is stored in `aluminium_data.xlsx` and loaded once into memory at startup (cached).
+- All market data (LME, Midwest premium, PPI) is stored in `aluminium_data.xlsx` (CNG comes from the request) and loaded once into memory at startup (cached).
 
 ---
 
@@ -47,15 +47,17 @@ Where:
 |---|---|
 | `AMS_Q` | `(MC_Q × DF_c) + CNG_Q` — Alloy Metal + Gas cost, current quarter |
 | `AMS_Q-1` | `(MC_Q-1 × DF_c) + CNG_Q-1` — same for previous quarter |
-| `MC_Q` | `LME + Midwest` of the **month being predicted**, in $/lb |
-| `MC_Q-1` | `LME + Midwest` of the **last month** of the previous quarter, in $/lb |
+| `MC_Q` | `(LME + Midwest) × 0.91 + 1.25` for the **month being predicted**, in $/lb |
+| `MC_Q-1` | `(LME + Midwest) × 0.91 + 1.25` for the **last month** of the previous quarter, in $/lb |
 | `PPI_Q` | PPI index value of the **month being predicted** |
-| `PPI_Q-1` | PPI index value at the **last month** of the previous quarter |
+| `PPI_Q-1` | **Average** PPI of the three months of the previous quarter |
 | `PPI_Factor` | `(PPI_Q − PPI_Q-1) / PPI_Q-1` |
-| `CNG_Q` | CNG cost of the **month being predicted** ($/lb) |
-| `CNG_Q-1` | CNG cost at the **last month** of the previous quarter ($/lb) |
+| `CNG_Q` | Supplied in the request (`cng_q`), same for every month ($/lb) |
+| `CNG_Q-1` | Supplied in the request (`cng_q-1`), same for every month ($/lb) |
 | `DF_c` | Fixed constant = **1.44** |
 | `PWt` | Part weight in lbs (fixed per Part Number + Tier 1) |
+
+The 0.91 and 1.25 constants are `MC_MULTIPLIER` and `MC_OFFSET` in `app/core/config.py`.
 
 **Iteration logic:** Starting from the current month (auto-detected from system clock), the engine forecasts the first month of the next quarter, then the second, and so on for 12 months. Each predicted price becomes the `P_current` for the next month.
 
@@ -137,6 +139,8 @@ Central place for all tunable constants. Uses `pydantic-settings` so any value c
 | Setting | Default | Meaning |
 |---|---|---|
 | `DF_C` | `1.44` | Density/conversion factor in the AMS formula |
+| `MC_MULTIPLIER` | `0.91` | MC = (LME + Midwest) × MC_MULTIPLIER + MC_OFFSET |
+| `MC_OFFSET` | `1.25` | Added after the multiplier in the MC formula |
 | `FORECAST_HORIZON_MONTHS` | `12` | Number of months to forecast |
 
 If you ever need to change `DF_c`, change it here — not inside the formula code.
@@ -159,7 +163,7 @@ logger = logging.getLogger(__name__)
 ### `app/data/base.py` ⭐ Read this first
 Defines the **abstract interfaces (contracts)** that all business logic depends on. There are two abstract classes:
 
-- **`MarketDataRepository`** — must implement `get_lme()`, `get_midwest_premium()`, `get_ppi()`, `get_cng()`. Each takes a `YYYY-MM` string and returns `float | None`.
+- **`MarketDataRepository`** — must implement `get_lme()`, `get_midwest_premium()`, `get_ppi()`. Each takes a `YYYY-MM` string and returns `float | None`.
 - **`PartRepository`** — must implement `get_part_weight(part_number, tier_1)` and `get_base_price(part_number, tier_1, year_month)`.
 
 **The forecast engine only ever imports these abstractions — never any concrete implementation.** This is the key architectural decision that makes the data source swappable. See [How to Swap a Data Source](#8-how-to-swap-a-data-source).
@@ -169,7 +173,7 @@ Defines the **abstract interfaces (contracts)** that all business logic depends 
 ### `app/data/excel_store.py` ⭐ Active data source
 Reads `aluminium_data.xlsx` and implements both abstract interfaces.
 
-- **`ExcelMarketDataRepository`** — serves LME, Midwest, PPI, CNG values from their respective sheets.
+- **`ExcelMarketDataRepository`** — serves LME, Midwest, PPI values from their respective sheets.
 - **`ExcelPartRepository`** — looks up parts using **(Part Number + Tier 1)** as the composite key.
 - **`get_all_parts()`** — returns every row from the Parts sheet; used by the `/parts` listing endpoint.
 - **Caching** — the workbook is loaded once via `@lru_cache`. To reload after editing the Excel without restarting the server, call `POST /api/v1/forecast-excel/reload`.
@@ -231,9 +235,13 @@ Pydantic model for the single-part endpoint body. Validates incoming JSON before
 {
   "part_number": "09-0052-003",
   "tier_1": "Kadon Aerospace",
+  "cng_q": 0.97,
+  "cng_q-1": 0.95,
   "include_current_month": "NO"
 }
 ```
+
+`cng_q` and `cng_q-1` are required ($/lb, `cng_q_1` is also accepted) and are used unchanged for every forecast month.
 
 `include_current_month` is optional (`"YES"` / `"NO"`, case-insensitive, default `"NO"`). The batch endpoint accepts it as a multipart form field alongside the file.
 
@@ -309,7 +317,6 @@ pytest tests/ -v
 | **LME** | Month (YYYY-MM), LME Price ($/lb) | Green = actual, Yellow = projected |
 | **Midwest** | Month (YYYY-MM), Midwest Premium ($/lb) | Same colour coding |
 | **PPI** | Month (YYYY-MM), PPI Index (dimensionless) | BLS index value, not a dollar amount |
-| **CNG** | Month (YYYY-MM), CNG Cost ($/lb) | Normalised to aluminium processing basis |
 
 **After editing the Excel**, either restart the server or call `POST /api/v1/forecast-excel/reload` to pick up changes without restarting.
 
@@ -465,7 +472,9 @@ Same pattern — implement `PartRepository` from `base.py` and swap the `get_par
   - Header month = last month → use `include_current_month: "YES"` (forecast starts this month).
   - Header month = this month → use `include_current_month: "NO"` (forecast starts next month).
 
-### Market data sheets (LME, Midwest, PPI, CNG)
+### Market data sheets (LME, Midwest, PPI)
+
+CNG is no longer read from Excel — `cng_q` and `cng_q-1` come from the request.
 
 | Month (YYYY-MM) | Value |
 |---|---|

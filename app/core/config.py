@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     # Density / conversion factor (fixed per contract)
     DF_C: float = 1.44
 
+    # MC = (LME + Midwest) × MC_MULTIPLIER + MC_OFFSET
+    MC_MULTIPLIER: float = 0.91
+    MC_OFFSET: float = 1.25
+
     # How many future months to forecast
     FORECAST_HORIZON_MONTHS: int = 12
 

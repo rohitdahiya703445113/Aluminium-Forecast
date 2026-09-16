@@ -172,6 +172,8 @@ def read_parts_from_upload(file_bytes: bytes) -> list[tuple[str, str]]:
 def build_forecast_workbook(
     part_tier_pairs: list[tuple[str, str]],
     engine: ForecastEngine,
+    cng_q: float,
+    cng_q_1: float,
     include_current_month: bool = False,
 ) -> bytes:
     """
@@ -191,6 +193,8 @@ def build_forecast_workbook(
             results[(pn, t1)] = engine.forecast(
                 part_number=pn,
                 tier_1=t1,
+                cng_q=cng_q,
+                cng_q_1=cng_q_1,
                 include_current_month=include_current_month,
             )
             logger.debug("Forecast OK: %s / %s", pn, t1)

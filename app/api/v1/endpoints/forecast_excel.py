@@ -87,6 +87,9 @@ def get_forecast_excel(
     of `aluminium_data.xlsx` exactly. The current price is always read from
     that sheet — it cannot be overridden via the API.
 
+    **cng_q** and **cng_q-1** (required, $/lb): CNG values used unchanged
+    for every forecast month.
+
     **include_current_month** (optional, `"YES"` / `"NO"`, default `"NO"`):
     - `"NO"`  → 12 months, starting next month.
     - `"YES"` → 13 months, starting with the current month.
@@ -99,6 +102,8 @@ def get_forecast_excel(
         result = engine.forecast(
             part_number=payload.part_number,
             tier_1=payload.tier_1,
+            cng_q=payload.cng_q,
+            cng_q_1=payload.cng_q_1,
             include_breakdown=True,   # factor breakdown only on single-part endpoint
             include_current_month=(payload.include_current_month == "YES"),
         )

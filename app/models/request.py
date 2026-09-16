@@ -2,11 +2,14 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ForecastRequest(BaseModel):
     """Request body for the single-part forecast endpoint."""
+
+    # Accept both "cng_q-1" (alias) and "cng_q_1" (field name).
+    model_config = ConfigDict(populate_by_name=True)
 
     part_number: str = Field(
         ...,
@@ -21,6 +24,20 @@ class ForecastRequest(BaseModel):
             "Together with part_number this forms the unique lookup key."
         ),
         examples=["Kadon Aerospace"],
+    )
+    cng_q: float = Field(
+        ...,
+        description="CNG_Q ($/lb). Used as-is for every forecast month.",
+        examples=[0.97],
+    )
+    cng_q_1: float = Field(
+        ...,
+        alias="cng_q-1",
+        description=(
+            "CNG_Q-1 ($/lb). Used as-is for every forecast month. "
+            "Send as 'cng_q-1' (or 'cng_q_1')."
+        ),
+        examples=[0.95],
     )
     include_current_month: Literal["YES", "NO"] = Field(
         "NO",

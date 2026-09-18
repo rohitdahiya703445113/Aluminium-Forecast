@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     MC_MULTIPLIER: float = 0.91
     MC_OFFSET: float = 1.25
 
+    # Actual (published) PPI values reach up to this many months before the
+    # current month; anything later in the sheet is a projection.
+    # Sitting in September with lag 2 → actuals through July.
+    PPI_ACTUAL_LAG_MONTHS: int = 2
+
     # How many future months to forecast
     FORECAST_HORIZON_MONTHS: int = 12
 

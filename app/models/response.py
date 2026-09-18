@@ -50,7 +50,12 @@ class QuarterContext(BaseModel):
         ..., alias="midwest_q-1", description="Midwest premium of last month of previous quarter ($/lb)"
     )
     ppi_q_1: float = Field(
-        ..., alias="ppi_q-1", description="PPI_Q-1: average PPI of the three months of the previous quarter"
+        ..., alias="ppi_q-1", description=(
+            "PPI_Q-1: actual PPI of the last month of the previous quarter when "
+            "that quarter is fully covered by published actuals (which end 2 "
+            "months before the current month); otherwise the average of its "
+            "three (projected) months"
+        )
     )
     cng_q_1: float = Field(
         ..., alias="cng_q-1", description="CNG_Q-1: from the request, same for every month ($/lb)"

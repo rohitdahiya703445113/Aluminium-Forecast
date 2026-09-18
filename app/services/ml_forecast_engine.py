@@ -15,7 +15,9 @@ MODEL INPUT COLUMNS (must match training exactly)
   MC_Q            → (LME + Midwest of the predicted month) × 0.91 + 1.25 ($/lb)
   MC_Q-1          → (LME + Midwest at last month of previous quarter) × 0.91 + 1.25
   PPI_Q           → PPI index of the month being predicted
-  PPI_Q-1         → average PPI of the previous quarter's three months
+  PPI_Q-1         → actual PPI of the previous quarter's last month when that
+                    quarter is fully covered by PPI actuals, else the average
+                    of its three months
   CNG_Q           → from the request, constant for every month ($/lb)
   CNG_Q-1         → from the request, constant for every month ($/lb)
   Drauss Factor   → DF_c constant (1.44)
@@ -137,6 +139,13 @@ def _prev_month(year: int, month: int) -> tuple[int, int]:
     return (year - 1, 12) if month == 1 else (year, month - 1)
 
 
+def _shift_month(year_month: str, delta: int) -> str:
+    """Shift a 'YYYY-MM' key by *delta* calendar months (delta may be negative)."""
+    year, month = map(int, year_month.split("-"))
+    total = year * 12 + (month - 1) + delta
+    return f"{total // 12}-{total % 12 + 1:02d}"
+
+
 def _price_month_error(
     parts: PartRepository,
     part_number: str,
@@ -182,6 +191,25 @@ def _require(value: Optional[float], description: str) -> float:
 # QUARTER CONTEXT BUILDER  (same logic as forecast_engine._compute_quarter_context)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _ppi_prev_quarter(
+    market: MarketDataRepository,
+    prev_year: int,
+    prev_quarter: int,
+    current_month: str,
+) -> float:
+    """
+    PPI_Q-1: actual PPI of the previous quarter's last month when the whole
+    quarter is covered by published actuals (which lag the current month by
+    PPI_ACTUAL_LAG_MONTHS — 2 → sitting in September, actuals through July);
+    otherwise the average of the quarter's three (projected) months.
+    """
+    months = _quarter_months(prev_year, prev_quarter)
+    # 'YYYY-MM' strings sort chronologically, so plain comparison works.
+    if months[-1] <= _shift_month(current_month, -settings.PPI_ACTUAL_LAG_MONTHS):
+        return _require(market.get_ppi(months[-1]), f"PPI for {months[-1]}")
+    return sum(_require(market.get_ppi(m), f"PPI for {m}") for m in months) / 3
+
+
 def _compute_quarter_context(
     year: int,
     month: int,
@@ -189,6 +217,7 @@ def _compute_quarter_context(
     df_c: float,
     cng_q: float,
     cng_q_1: float,
+    current_month: str,
 ) -> QuarterContext:
     quarter = _quarter_of_month(month)
     prev_year, prev_quarter = _prev_quarter(year, quarter)
@@ -207,9 +236,7 @@ def _compute_quarter_context(
     lme_qp    = _require(market.get_lme(last_qp),             f"LME for {last_qp}")
     mwp_qp    = _require(market.get_midwest_premium(last_qp), f"Midwest for {last_qp}")
     mc_q_prev = (lme_qp + mwp_qp) * mc_mult + mc_offset
-    ppi_qp    = [_require(market.get_ppi(m), f"PPI for {m}")
-                 for m in _quarter_months(prev_year, prev_quarter)]
-    ppi_q_prev = sum(ppi_qp) / 3
+    ppi_q_prev = _ppi_prev_quarter(market, prev_year, prev_quarter, current_month)
     ams_q_prev = mc_q_prev * df_c + cng_q_1
 
     if ppi_q_prev == 0:
@@ -347,7 +374,8 @@ class MLForecastEngine:
             # ── Context for this month (MC_Q / PPI_Q vary per month) ──────
             try:
                 ctx = _compute_quarter_context(
-                    forecast_year, forecast_month, self._market, self._df_c, cng_q, cng_q_1
+                    forecast_year, forecast_month, self._market, self._df_c,
+                        cng_q, cng_q_1, current_month,
                 )
             except ValueError as exc:
                 raise ValueError(

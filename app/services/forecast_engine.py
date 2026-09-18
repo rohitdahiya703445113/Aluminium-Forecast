@@ -13,7 +13,11 @@ Where:
               (previous to the quarter containing the predicted month)
   PPI_Factor = (PPI_Q - PPI_Q-1) / PPI_Q-1
                where PPI_Q   = PPI of the month being PREDICTED
-                     PPI_Q-1 = AVERAGE PPI of the previous quarter's 3 months
+                     PPI_Q-1 = PPI of the LAST month of the previous quarter
+                               when that whole quarter is covered by published
+                               actuals (actuals lag the current month by
+                               PPI_ACTUAL_LAG_MONTHS), otherwise the AVERAGE
+                               of its 3 (projected) months
   CNG_Q     = supplied in the request, constant for every month
   CNG_Q-1   = supplied in the request, constant for every month
   DF_c      = 1.44 (constant)
@@ -105,6 +109,31 @@ def _compute_mc(
     logger.debug("MC_%s: LME=%.4f  MWP=%.4f  MC=%.4f", year_month, lme, mwp, mc)
     return _MCResult(mc=mc, lme=lme, midwest=mwp)
 
+def _ppi_prev_quarter(
+    market_repo: MarketDataRepository,
+    prev_year: int,
+    prev_quarter: int,
+    current_month: str,
+) -> tuple[float, str]:
+    """
+    PPI_Q-1 for the previous quarter, plus a short description of how it was
+    obtained (for logging).
+
+    Published PPI actuals lag the current month by PPI_ACTUAL_LAG_MONTHS
+    (2 → sitting in September, actuals run through July); later rows in the
+    sheet are projections. When the whole previous quarter is covered by
+    actuals we use the ACTUAL of its last month; otherwise the quarter is
+    (partly) projected, so we average all three months instead.
+    """
+    months = _quarter_months(prev_year, prev_quarter)
+    last_month = months[-1]
+    # 'YYYY-MM' strings sort chronologically, so plain comparison works.
+    if last_month <= _shift_month(current_month, -settings.PPI_ACTUAL_LAG_MONTHS):
+        ppi = _require(market_repo.get_ppi(last_month), f"PPI for {last_month}")
+        return ppi, f"actual PPI of {last_month}"
+    values = [_require(market_repo.get_ppi(m), f"PPI for {m}") for m in months]
+    return sum(values) / 3, f"average of projected PPI {months[0]}..{last_month}"
+
 def _compute_quarter_context(
     year: int,
     month: int,
@@ -112,12 +141,15 @@ def _compute_quarter_context(
     df_c: float,
     cng_q: float,
     cng_q_1: float,
+    current_month: str,
 ) -> QuarterContext:
     """
     Build the full QuarterContext for the month being predicted.
       MC_Q / PPI_Q     → the predicted month itself
       MC_Q-1           → last month of the previous quarter
-      PPI_Q-1          → average of the previous quarter's three months
+      PPI_Q-1          → last month of the previous quarter when that quarter
+                         is fully covered by PPI actuals, else the average of
+                         its three months
       CNG_Q / CNG_Q-1  → fixed values supplied in the request
     Raises ValueError if any required data is missing.
     """
@@ -132,11 +164,9 @@ def _compute_quarter_context(
     # ── Previous quarter ──────────────────────────────────────────────────
     last_month_q_prev = _last_month_of_quarter(prev_year, prev_quarter)
     mc_result_prev = _compute_mc(last_month_q_prev, market_repo)
-    ppi_values_prev = [
-        _require(market_repo.get_ppi(m), f"PPI for {m}")
-        for m in _quarter_months(prev_year, prev_quarter)
-    ]
-    ppi_q_prev = sum(ppi_values_prev) / 3
+    ppi_q_prev, ppi_q_prev_basis = _ppi_prev_quarter(
+        market_repo, prev_year, prev_quarter, current_month
+    )
     ams_q_prev = (mc_result_prev.mc * df_c) + cng_q_1
     # ── Derived factors ──────────────────────────────────────────────────
     if ppi_q_prev == 0:
@@ -148,10 +178,10 @@ def _compute_quarter_context(
     ams_delta = ams_q - ams_q_prev
     logger.debug(
         "QuarterContext %s: MC_Q=%.4f AMS_Q=%.4f | MC_Q-1(%s)=%.4f AMS_Q-1=%.4f | "
-        "PPI_Factor=%.6f AMS_delta=%.4f",
+        "PPI_Q-1=%.4f (%s) PPI_Factor=%.6f AMS_delta=%.4f",
         target_month,
         mc_result.mc, ams_q, last_month_q_prev, mc_result_prev.mc, ams_q_prev,
-        ppi_factor, ams_delta,
+        ppi_q_prev, ppi_q_prev_basis, ppi_factor, ams_delta,
     )
     return QuarterContext(
         quarter_label=_quarter_label(year, quarter),
@@ -193,6 +223,12 @@ def _prev_month(year: int, month: int) -> tuple[int, int]:
     if month == 1:
         return year - 1, 12
     return year, month - 1
+
+def _shift_month(year_month: str, delta: int) -> str:
+    """Shift a 'YYYY-MM' key by *delta* calendar months (delta may be negative)."""
+    year, month = map(int, year_month.split("-"))
+    total = year * 12 + (month - 1) + delta
+    return f"{total // 12}-{total % 12 + 1:02d}"
 
 def _price_month_error(
     parts: PartRepository,
@@ -380,7 +416,8 @@ class ForecastEngine:
             # ── Build context for this month (MC_Q / PPI_Q vary per month) ─
             try:
                 ctx = _compute_quarter_context(
-                    forecast_year, forecast_month, self._market, self._df_c, cng_q, cng_q_1
+                    forecast_year, forecast_month, self._market, self._df_c,
+                    cng_q, cng_q_1, current_month,
                 )
             except ValueError as exc:
                 raise ValueError(

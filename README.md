@@ -50,7 +50,7 @@ Where:
 | `MC_Q` | `(LME + Midwest) × 0.91 + 1.25` for the **month being predicted**, in $/lb |
 | `MC_Q-1` | `(LME + Midwest) × 0.91 + 1.25` for the **last month** of the previous quarter, in $/lb |
 | `PPI_Q` | PPI index value of the **month being predicted** |
-| `PPI_Q-1` | **Average** PPI of the three months of the previous quarter |
+| `PPI_Q-1` | PPI of the **last month** of the previous quarter when that whole quarter is covered by published actuals; otherwise the **average** of its three months (projected values). PPI actuals end `PPI_ACTUAL_LAG_MONTHS` (2) months before the current month — sitting in September, actuals run through July. |
 | `PPI_Factor` | `(PPI_Q − PPI_Q-1) / PPI_Q-1` |
 | `CNG_Q` | Supplied in the request (`cng_q`), same for every month ($/lb) |
 | `CNG_Q-1` | Supplied in the request (`cng_q-1`), same for every month ($/lb) |
@@ -141,6 +141,7 @@ Central place for all tunable constants. Uses `pydantic-settings` so any value c
 | `DF_C` | `1.44` | Density/conversion factor in the AMS formula |
 | `MC_MULTIPLIER` | `0.91` | MC = (LME + Midwest) × MC_MULTIPLIER + MC_OFFSET |
 | `MC_OFFSET` | `1.25` | Added after the multiplier in the MC formula |
+| `PPI_ACTUAL_LAG_MONTHS` | `2` | How many months before the current month the published PPI actuals end |
 | `FORECAST_HORIZON_MONTHS` | `12` | Number of months to forecast |
 
 If you ever need to change `DF_c`, change it here — not inside the formula code.
